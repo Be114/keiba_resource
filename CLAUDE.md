@@ -24,3 +24,19 @@
 - [PR #1](https://github.com/Be114/keiba_resource/pull/1)
 
 ---
+
+## Session 2: データベースモデルの構築
+### 実施日
+2025-06-17
+### このセッションの目的
+競馬データを格納するためのSQLAlchemyモデル（Race、Result）とデータベースユーティリティ関数を実装し、PostgreSQLとの連携基盤を構築する。
+### 完了タスク
+- [x] `src/models.py`：SQLAlchemyを用いたRaceとResultモデルクラスの定義
+- [x] `src/db_utils.py`：データベース接続とセッション管理のユーティリティ関数の実装
+- [x] `requirements.txt`：必要なライブラリ（sqlalchemy、psycopg2-binary、python-dotenv）の追加
+- [x] 型ヒントとdocstringによる高品質なコード実装
+- [x] RaceとResult間のリレーションシップ定義（1対多）
+### プルリクエスト
+- [PR #2](https://github.com/Be114/keiba_resource/pull/2)
+
+---
