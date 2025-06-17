@@ -7,8 +7,8 @@
 
 from datetime import date
 from typing import List, Optional
-from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey, Text
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import relationship
 
 Base = declarative_base()
@@ -42,7 +42,7 @@ class Race(Base):
     track_condition: Optional[str] = Column(String(20))
     
     # リレーションシップ：1つのレースに複数の結果
-    results: List["Result"] = relationship("Result", back_populates="race")
+    results: List["Result"] = relationship("Result", back_populates="race", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         """レースオブジェクトの文字列表現を返す"""

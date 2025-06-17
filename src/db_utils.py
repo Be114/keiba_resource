@@ -8,7 +8,7 @@
 import os
 from typing import Optional
 from contextlib import contextmanager
-from sqlalchemy import create_engine, Engine
+from sqlalchemy import create_engine, Engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from dotenv import load_dotenv
 
@@ -115,7 +115,7 @@ class DatabaseManager:
         """
         try:
             with self.engine.connect() as connection:
-                connection.execute("SELECT 1")
+                connection.execute(text("SELECT 1"))
             return True
         except Exception:
             return False

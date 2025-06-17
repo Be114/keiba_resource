@@ -37,6 +37,6 @@
 - [x] 型ヒントとdocstringによる高品質なコード実装
 - [x] RaceとResult間のリレーションシップ定義（1対多）
 ### プルリクエスト
-- [PR #2](https://github.com/Be114/keiba_resource/pull/2)
+- [PR #1](https://github.com/Be114/keiba_resource/pull/1)
 
 ---
