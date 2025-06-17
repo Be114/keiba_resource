@@ -32,7 +32,7 @@ class Race(Base):
     
     __tablename__ = 'races'
     
-    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    id: str = Column(String(20), primary_key=True)
     date: date = Column(Date, nullable=False)
     course: str = Column(String(50), nullable=False)
     race_number: int = Column(Integer, nullable=False)
@@ -72,7 +72,7 @@ class Result(Base):
     __tablename__ = 'results'
     
     id: int = Column(Integer, primary_key=True, autoincrement=True)
-    race_id: int = Column(Integer, ForeignKey('races.id'), nullable=False)
+    race_id: str = Column(String(20), ForeignKey('races.id'), nullable=False)
     horse_name: str = Column(String(100), nullable=False)
     rank: int = Column(Integer, nullable=False)
     pre_race_rank: Optional[int] = Column(Integer)
