@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
+# IDE
+.idea/
+.vscode/
+
+# Results
+results/
+*.csv
+
+# Logs
+*.log
+error_log.txt
+
+# Docker
+postgres_data/
