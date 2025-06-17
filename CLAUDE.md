@@ -40,3 +40,22 @@
 - [PR #1](https://github.com/Be114/keiba_resource/pull/1)
 
 ---
+
+## Session 3: データ収集ツールの骨格とID取得機能の実装
+### 実施日
+2025-06-17
+### このセッションの目的
+netkeiba.comからレース情報を取得するためのデータ收集ツールの基本構造を構築し、指定期間の全レースIDを取得する機能を実装する。
+### 完了タスク
+- [x] `src/build_database.py`：データ収集ツールの新規作成
+- [x] `DataScraper`クラス：レース情報スクレイピングのメインクラス実装
+- [x] コマンドライン引数解析：argparseを使用した--start-year、--end-year引数の実装
+- [x] レースID取得ロジック：netkeiba.comのカレンダーページからレースIDを抽出する機能
+- [x] エラーハンドリング：requests.Sessionとurllib3.util.Retryを使ったリトライ機能
+- [x] 進捗表示：tqdmライブラリによる月ごとの進捗バー表示
+- [x] `requirements.txt`：新しい依存関係（requests、beautifulsoup4、lxml、tqdm）の追加
+- [x] 型ヒントとdocstringによる高品質なコード実装
+### プルリクエスト
+- [PR #TBD](https://github.com/Be114/keiba_resource/pull/TBD)
+
+---
