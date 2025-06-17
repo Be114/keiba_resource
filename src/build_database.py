@@ -20,8 +20,8 @@ from urllib3.util.retry import Retry
 from requests.adapters import HTTPAdapter
 from sqlalchemy.exc import IntegrityError
 
-from .db_utils import DatabaseManager
-from .models import Race, Result
+from src.db_utils import DatabaseManager
+from src.models import Race, Result
 
 
 class DataScraper:
@@ -224,14 +224,12 @@ class DataScraper:
             for _, row in results_df.iterrows():
                 result = Result(
                     race_id=race.id,
-                    finish_position=row.get('着順', 0),
-                    horse_number=row.get('馬番', 0),
                     horse_name=row.get('馬名', ''),
+                    rank=row.get('着順', 0),
+                    pre_race_rank=row.get('人気', 0),
                     jockey_name=row.get('騎手', ''),
-                    trainer_name=row.get('調教師', ''),
                     odds=row.get('単勝', 0.0),
-                    popularity=row.get('人気', 0),
-                    finish_time=row.get('タイム', '')
+                    weight=row.get('斤量', 0.0)
                 )
                 results.append(result)
             
