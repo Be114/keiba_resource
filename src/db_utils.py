@@ -6,6 +6,7 @@
 """
 
 import os
+import threading
 from typing import Optional
 from contextlib import contextmanager
 from sqlalchemy import create_engine, Engine, text
@@ -41,6 +42,8 @@ class DatabaseConfig:
 class DatabaseManager:
     """データベース接続とセッション管理を行うクラス"""
     
+    _lock = threading.Lock()
+    
     def __init__(self, config: Optional[DatabaseConfig] = None):
         """
         データベースマネージャーを初期化
@@ -56,12 +59,14 @@ class DatabaseManager:
     def engine(self) -> Engine:
         """SQLAlchemyエンジンを取得（遅延初期化）"""
         if self._engine is None:
-            self._engine = create_engine(
-                self.config.connection_url,
-                echo=False,  # SQLログ出力を無効化（本番環境向け）
-                pool_pre_ping=True,  # 接続の有効性を事前チェック
-                pool_recycle=3600,  # 1時間で接続をリサイクル
-            )
+            with self._lock:
+                if self._engine is None:
+                    self._engine = create_engine(
+                        self.config.connection_url,
+                        echo=False,  # SQLログ出力を無効化（本番環境向け）
+                        pool_pre_ping=True,  # 接続の有効性を事前チェック
+                        pool_recycle=3600,  # 1時間で接続をリサイクル
+                    )
         return self._engine
     
     @property
