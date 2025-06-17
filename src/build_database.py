@@ -138,7 +138,7 @@ class DataScraper:
         print(f"対象期間: {self.start_year}年1月 - {self.end_year}年12月")
         
         total_months = (self.end_year - self.start_year + 1) * 12
-        all_race_ids = []
+        all_race_ids: set[str] = set()
         
         # 進捗バーの設定
         with tqdm(total=total_months, desc="レースID取得中") as pbar:
@@ -146,7 +146,7 @@ class DataScraper:
                 for month in range(1, 13):
                     # 月ごとのレースID取得
                     race_ids = self._fetch_race_ids_from_month(year, month)
-                    all_race_ids.extend(race_ids)
+                    all_race_ids.update(race_ids)
                     
                     # 進捗表示
                     pbar.set_postfix({
@@ -177,7 +177,7 @@ class DataScraper:
         # サンプルレースIDの表示（最初の10件）
         if all_race_ids:
             print(f"\nサンプルレースID（最初の10件）:")
-            for i, race_id in enumerate(all_race_ids[:10], 1):
+            for i, race_id in enumerate(list(all_race_ids)[:10], 1):
                 print(f"  {i:2d}. {race_id}")
         
         print("\n注意: この段階ではレースIDの取得のみを行いました。")
