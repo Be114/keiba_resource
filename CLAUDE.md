@@ -118,5 +118,27 @@ DataScraperクラスのレースメタデータ抽出機能を強化し、これ
 - [x] エラーハンドリング：YAML解析エラー、ファイル読み込みエラーの包括的処理
 - [x] 型ヒントとdocstringによる高品質なコード実装
 ### プルリクエスト
+- [PR #7](https://github.com/Be114/keiba_resource/pull/7)
+
+---
+
+## Session 7: 条件に基づいたデータ抽出機能の実装
+### 実施日
+2025-06-19
+### このセッションの目的
+AnalysisEngineクラスを拡張し、YAMLファイルから読み取った条件に基づいて、PostgreSQLデータベースから動的にデータを抽出する機能を実装する。SQLAlchemyのORMを活用した柔軟なクエリ構築システムを確立する。
+### 完了タスク
+- [x] `src/run_analysis.py`：db_utilsとmodelsライブラリのインポート追加
+- [x] `AnalysisEngine.__init__()`：DatabaseManagerのインスタンス化による DB接続機能の統合
+- [x] `_build_query()`メソッド：YAML条件を解析してSQLAlchemyクエリを動的構築する機能の実装
+- [x] 期間条件処理：date_range（開始日・終了日）による時間範囲フィルタリング機能の実装
+- [x] 複数値条件処理：race_tracks、course_types、weather_conditions、track_conditionsのIN句対応
+- [x] 範囲条件処理：distance_range（最小・最大距離）による数値範囲フィルタリング機能の実装
+- [x] `_extract_data_to_dataframe()`メソッド：SQLAlchemy結果をPandas DataFrameに変換する機能の実装
+- [x] `run()`メソッドの拡張：データベース接続テスト、クエリ実行、データ抽出、統計表示の統合処理
+- [x] JOIN処理：ResultモデルとRaceモデルの適切な結合による包括的データ取得
+- [x] エラーハンドリング：データベース接続エラー、クエリ実行エラーの包括的処理
+- [x] 型ヒントとdocstringによる高品質なコード実装
+### プルリクエスト
 - 作成予定
 
