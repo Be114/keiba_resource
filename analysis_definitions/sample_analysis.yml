@@ -1,0 +1,81 @@
+# 競馬分析設定ファイル サンプル
+# このファイルは分析エンジンの設定例を示しています
+
+# 分析名（必須）
+analysis_name: "サンプル競馬分析 - 距離別勝率分析"
+
+# 分析条件（必須）
+conditions:
+  # 対象期間
+  date_range:
+    start: "2023-01-01"
+    end: "2023-12-31"
+  
+  # 対象競馬場
+  race_tracks:
+    - "東京"
+    - "中山"
+    - "京都"
+    - "阪神"
+  
+  # 距離範囲
+  distance_range:
+    min: 1200
+    max: 3200
+  
+  # コース種別
+  course_types:
+    - "芝"
+    - "ダート"
+  
+  # 天候条件
+  weather_conditions:
+    - "晴"
+    - "曇"
+    - "雨"
+  
+  # 馬場状態
+  track_conditions:
+    - "良"
+    - "稍重"
+    - "重"
+    - "不良"
+
+# 出力設定（必須）
+output:
+  # 結果の保存先
+  save_path: "results/sample_analysis_results.csv"
+  
+  # 出力形式
+  format: "csv"
+  
+  # グラフ生成
+  generate_charts: true
+  
+  # チャート保存先
+  chart_path: "results/sample_analysis_charts/"
+  
+  # 詳細ログ出力
+  verbose: true
+
+# オプション設定（任意）
+options:
+  # 統計手法
+  statistical_method: "chi_square"
+  
+  # 信頼区間
+  confidence_interval: 0.95
+  
+  # 最小サンプル数
+  min_sample_size: 10
+  
+  # データクリーニング
+  data_cleaning:
+    remove_outliers: true
+    outlier_threshold: 3.0
+  
+  # 分析対象
+  analysis_targets:
+    - "win_rate_by_distance"
+    - "win_rate_by_track_condition"
+    - "win_rate_by_weather"
