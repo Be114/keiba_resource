@@ -45,7 +45,7 @@ class DataScraper:
     TRACK_TYPE_PATTERN = re.compile(r'(芝|ダート|障害)')
     WEATHER_PATTERN = re.compile(r'天候\s*:\s*(\S+)')
     TRACK_CONDITION_PATTERN = re.compile(r'馬場\s*:\s*(\S+)')
-    RACE_NAME_PATTERN = re.compile(r'race_name.*?>([^<]+)</)
+    RACE_NAME_PATTERN = re.compile(r'race_name.*?>([^<]+)</')
     
     def __init__(self, start_year: int, end_year: int):
         """
