@@ -10,12 +10,11 @@ import argparse
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 import yaml
 import pandas as pd
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
 
 from .db_utils import DatabaseManager
 from .models import Race, Result
@@ -107,6 +106,128 @@ class AnalysisEngine:
         
         print("="*50)
     
+    def _apply_date_conditions(self, query: Any, conditions: Dict[str, Any]) -> Any:
+        """
+        日付範囲条件をクエリに適用します
+        
+        Args:
+            query: SQLAlchemyクエリオブジェクト
+            conditions: YAML設定の条件辞書
+            
+        Returns:
+            更新されたSQLAlchemyクエリオブジェクト
+            
+        Raises:
+            ValueError: 日付フォーマットが不正な場合
+        """
+        if 'date_range' not in conditions:
+            return query
+            
+        date_range = conditions['date_range']
+        
+        if 'start' in date_range:
+            try:
+                start_date = datetime.strptime(date_range['start'], '%Y-%m-%d').date()
+                query = query.filter(Race.date >= start_date)
+            except ValueError as e:
+                raise ValueError(f"日付フォーマットエラー (date_range.start): '{date_range['start']}' は正しい日付形式 (YYYY-MM-DD) ではありません") from e
+                
+        if 'end' in date_range:
+            try:
+                end_date = datetime.strptime(date_range['end'], '%Y-%m-%d').date()
+                query = query.filter(Race.date <= end_date)
+            except ValueError as e:
+                raise ValueError(f"日付フォーマットエラー (date_range.end): '{date_range['end']}' は正しい日付形式 (YYYY-MM-DD) ではありません") from e
+                
+        return query
+    
+    def _apply_track_conditions(self, query: Any, conditions: Dict[str, Any]) -> Any:
+        """
+        競馬場条件をクエリに適用します
+        
+        Args:
+            query: SQLAlchemyクエリオブジェクト
+            conditions: YAML設定の条件辞書
+            
+        Returns:
+            更新されたSQLAlchemyクエリオブジェクト
+        """
+        if 'race_tracks' in conditions:
+            race_tracks = conditions['race_tracks']
+            if race_tracks:
+                query = query.filter(Race.course.in_(race_tracks))
+        return query
+    
+    def _apply_distance_conditions(self, query: Any, conditions: Dict[str, Any]) -> Any:
+        """
+        距離範囲条件をクエリに適用します
+        
+        Args:
+            query: SQLAlchemyクエリオブジェクト
+            conditions: YAML設定の条件辞書
+            
+        Returns:
+            更新されたSQLAlchemyクエリオブジェクト
+        """
+        if 'distance_range' in conditions:
+            distance_range = conditions['distance_range']
+            if 'min' in distance_range:
+                query = query.filter(Race.distance >= distance_range['min'])
+            if 'max' in distance_range:
+                query = query.filter(Race.distance <= distance_range['max'])
+        return query
+    
+    def _apply_course_type_conditions(self, query: Any, conditions: Dict[str, Any]) -> Any:
+        """
+        コース種別条件をクエリに適用します
+        
+        Args:
+            query: SQLAlchemyクエリオブジェクト
+            conditions: YAML設定の条件辞書
+            
+        Returns:
+            更新されたSQLAlchemyクエリオブジェクト
+        """
+        if 'course_types' in conditions:
+            course_types = conditions['course_types']
+            if course_types:
+                query = query.filter(Race.track_type.in_(course_types))
+        return query
+    
+    def _apply_weather_conditions(self, query: Any, conditions: Dict[str, Any]) -> Any:
+        """
+        天候条件をクエリに適用します
+        
+        Args:
+            query: SQLAlchemyクエリオブジェクト
+            conditions: YAML設定の条件辞書
+            
+        Returns:
+            更新されたSQLAlchemyクエリオブジェクト
+        """
+        if 'weather_conditions' in conditions:
+            weather_conditions = conditions['weather_conditions']
+            if weather_conditions:
+                query = query.filter(Race.weather.in_(weather_conditions))
+        return query
+    
+    def _apply_track_state_conditions(self, query: Any, conditions: Dict[str, Any]) -> Any:
+        """
+        馬場状態条件をクエリに適用します
+        
+        Args:
+            query: SQLAlchemyクエリオブジェクト
+            conditions: YAML設定の条件辞書
+            
+        Returns:
+            更新されたSQLAlchemyクエリオブジェクト
+        """
+        if 'track_conditions' in conditions:
+            track_conditions = conditions['track_conditions']
+            if track_conditions:
+                query = query.filter(Race.track_condition.in_(track_conditions))
+        return query
+    
     def _build_query(self, session: Session) -> Any:
         """
         YAML設定の条件に基づいて動的にSQLAlchemyクエリを構築します
@@ -116,53 +237,22 @@ class AnalysisEngine:
             
         Returns:
             SQLAlchemyクエリオブジェクト
+            
+        Raises:
+            ValueError: 日付フォーマットが不正な場合
         """
         # 基本クエリ: ResultとRaceをJOIN
         query = session.query(Result).join(Race)
         
         conditions = self.config.get('conditions', {})
         
-        # 期間条件
-        if 'date_range' in conditions:
-            date_range = conditions['date_range']
-            if 'start' in date_range:
-                start_date = datetime.strptime(date_range['start'], '%Y-%m-%d').date()
-                query = query.filter(Race.date >= start_date)
-            if 'end' in date_range:
-                end_date = datetime.strptime(date_range['end'], '%Y-%m-%d').date()
-                query = query.filter(Race.date <= end_date)
-        
-        # 競馬場条件
-        if 'race_tracks' in conditions:
-            race_tracks = conditions['race_tracks']
-            if race_tracks:
-                query = query.filter(Race.course.in_(race_tracks))
-        
-        # 距離範囲条件  
-        if 'distance_range' in conditions:
-            distance_range = conditions['distance_range']
-            if 'min' in distance_range:
-                query = query.filter(Race.distance >= distance_range['min'])
-            if 'max' in distance_range:
-                query = query.filter(Race.distance <= distance_range['max'])
-        
-        # コース種別条件
-        if 'course_types' in conditions:
-            course_types = conditions['course_types']
-            if course_types:
-                query = query.filter(Race.track_type.in_(course_types))
-        
-        # 天候条件
-        if 'weather_conditions' in conditions:
-            weather_conditions = conditions['weather_conditions']
-            if weather_conditions:
-                query = query.filter(Race.weather.in_(weather_conditions))
-        
-        # 馬場状態条件
-        if 'track_conditions' in conditions:
-            track_conditions = conditions['track_conditions']
-            if track_conditions:
-                query = query.filter(Race.track_condition.in_(track_conditions))
+        # 各条件をヘルパーメソッドで適用
+        query = self._apply_date_conditions(query, conditions)
+        query = self._apply_track_conditions(query, conditions)
+        query = self._apply_distance_conditions(query, conditions)
+        query = self._apply_course_type_conditions(query, conditions)
+        query = self._apply_weather_conditions(query, conditions)
+        query = self._apply_track_state_conditions(query, conditions)
         
         return query
     
