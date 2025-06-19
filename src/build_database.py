@@ -165,8 +165,24 @@ class DataScraper:
             results_df = tables[0]
             
             # データクレンジング: 不要な列を削除し、データ型を調整
-            # netkeiba.comの構造に依存するため、実際のHTML構造に合わせて調整が必要
-            if len(results_df.columns) > 10:  # 最小限の列数チェック
+            # 基本的なクレンジング
+            # 数値列の処理
+            numeric_columns = ['着順', '人気', '単勝', '斤量']
+            for col in numeric_columns:
+                if col in results_df.columns:
+                    # "---"や空文字列をNaNに変換
+                    results_df[col] = results_df[col].replace(['---', '', '除外', '中止', '取消'], pd.NA)
+                    # 数値型に変換を試行
+                    results_df[col] = pd.to_numeric(results_df[col], errors='coerce')
+            
+            # 文字列列の処理
+            string_columns = ['馬名', '騎手']
+            for col in string_columns:
+                if col in results_df.columns:
+                    results_df[col] = results_df[col].fillna('').astype(str)
+            
+            # 最小限の列数チェック
+            if len(results_df.columns) > 5:  # 最小限の列数チェック
                 # race_idを追加
                 results_df['race_id'] = race_id
                 return results_df
@@ -222,14 +238,20 @@ class DataScraper:
             # Resultオブジェクトのリストを作成
             results = []
             for _, row in results_df.iterrows():
+                # 安全な型変換
+                rank = int(row.get('着順', 0)) if pd.notna(row.get('着順', 0)) else 0
+                pre_race_rank = int(row.get('人気', 0)) if pd.notna(row.get('人気', 0)) else 0
+                odds = float(row.get('単勝', 0.0)) if pd.notna(row.get('単勝', 0.0)) else 0.0
+                weight = float(row.get('斤量', 0.0)) if pd.notna(row.get('斤量', 0.0)) else 0.0
+                
                 result = Result(
                     race_id=race.id,
                     horse_name=row.get('馬名', ''),
-                    rank=row.get('着順', 0),
-                    pre_race_rank=row.get('人気', 0),
+                    rank=rank,
+                    pre_race_rank=pre_race_rank,
                     jockey_name=row.get('騎手', ''),
-                    odds=row.get('単勝', 0.0),
-                    weight=row.get('斤量', 0.0)
+                    odds=odds,
+                    weight=weight
                 )
                 results.append(result)
             
@@ -317,7 +339,7 @@ class DataScraper:
                         # race_idから基本的なレース情報を作成（簡易版）
                         # 実際の実装では、レースページからより詳細な情報を抽出する必要がある
                         race_info = {
-                            'id': int(race_id),
+                            'id': race_id,  # StringとしてそのままIDを使用
                             'date': datetime.strptime(race_id[:8], '%Y%m%d').date(),
                             'course': 'Unknown',  # HTMLパースで取得する必要がある
                             'race_number': int(race_id[8:10]) if len(race_id) >= 10 else 1,
