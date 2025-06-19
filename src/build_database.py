@@ -40,6 +40,13 @@ class DataScraper:
     # レースID抽出用の正規表現パターン
     RACE_ID_PATTERN = re.compile(r'/race/(\d{8,})')
     
+    # レースメタデータ抽出用の正規表現パターン
+    DISTANCE_PATTERN = re.compile(r'(\d+)m')
+    TRACK_TYPE_PATTERN = re.compile(r'(芝|ダート|障害)')
+    WEATHER_PATTERN = re.compile(r'天候\s*:\s*(\S+)')
+    TRACK_CONDITION_PATTERN = re.compile(r'馬場\s*:\s*(\S+)')
+    RACE_NAME_PATTERN = re.compile(r'race_name.*?>([^<]+)</)
+    
     def __init__(self, start_year: int, end_year: int):
         """
         データスクレイパーを初期化
@@ -138,21 +145,107 @@ class DataScraper:
         
         return race_ids
     
-    def _scrape_race_results(self, race_id: str) -> Optional[pd.DataFrame]:
+    def _scrape_race_metadata(self, soup: BeautifulSoup) -> dict:
         """
-        指定されたレースIDの結果データをスクレイピング
+        レースページのHTMLからメタデータを抽出
+        
+        Args:
+            soup: BeautifulSoupオブジェクト（レースページのHTML）
+            
+        Returns:
+            レースメタデータを含む辞書
+        """
+        metadata = {
+            'race_name': None,
+            'distance': None,
+            'track_type': None,
+            'weather': None,
+            'track_condition': None,
+            'course': None
+        }
+        
+        try:
+            # レース名を抽出
+            race_name_elem = soup.find('h1')
+            if race_name_elem:
+                metadata['race_name'] = race_name_elem.get_text(strip=True)
+            
+            # コース情報（開催場所）を抽出
+            # 一般的に「阪神」「東京」などが含まれる要素を探す
+            course_candidates = soup.find_all(['p', 'div', 'span'], 
+                                            text=re.compile(r'(東京|中山|阪神|京都|中京|新潟|小倉|函館|札幌|福島)'))
+            if course_candidates:
+                course_text = course_candidates[0].get_text(strip=True)
+                # 開催場所名を抽出
+                course_match = re.search(r'(東京|中山|阪神|京都|中京|新潟|小倉|函館|札幌|福島)', course_text)
+                if course_match:
+                    metadata['course'] = course_match.group(1)
+            
+            # レース条件を含むテキストを検索
+            # netkeiba.comでは通常「芝1600m」のような表記が使われる
+            race_info_text = soup.get_text()
+            
+            # 距離を抽出
+            distance_match = self.DISTANCE_PATTERN.search(race_info_text)
+            if distance_match:
+                metadata['distance'] = int(distance_match.group(1))
+            
+            # コース種別（芝/ダート/障害）を抽出
+            track_type_match = self.TRACK_TYPE_PATTERN.search(race_info_text)
+            if track_type_match:
+                metadata['track_type'] = track_type_match.group(1)
+            
+            # 天候を抽出
+            weather_match = self.WEATHER_PATTERN.search(race_info_text)
+            if weather_match:
+                metadata['weather'] = weather_match.group(1)
+            
+            # 馬場状態を抽出
+            track_condition_match = self.TRACK_CONDITION_PATTERN.search(race_info_text)
+            if track_condition_match:
+                metadata['track_condition'] = track_condition_match.group(1)
+            
+            # より具体的な要素を探す
+            # レース条件を含む特定のクラスや要素を探す
+            race_data_elements = soup.find_all(['td', 'th', 'span', 'div'], 
+                                              text=re.compile(r'(芝|ダート|障害).*(\d+)m'))
+            
+            if race_data_elements:
+                for elem in race_data_elements:
+                    text = elem.get_text(strip=True)
+                    # より詳細な距離とコース種別の抽出
+                    detailed_match = re.search(r'(芝|ダート|障害)\s*(\d+)', text)
+                    if detailed_match:
+                        if not metadata['track_type']:
+                            metadata['track_type'] = detailed_match.group(1)
+                        if not metadata['distance']:
+                            metadata['distance'] = int(detailed_match.group(2))
+                        break
+            
+        except Exception as e:
+            print(f"Error extracting race metadata: {e}")
+        
+        return metadata
+    
+    def _scrape_race_results(self, race_id: str) -> Optional[tuple[pd.DataFrame, dict]]:
+        """
+        指定されたレースIDの結果データとメタデータをスクレイピング
         
         Args:
             race_id: レースの一意識別子
             
         Returns:
-            レース結果のDataFrame。取得に失敗した場合はNone
+            (レース結果のDataFrame, レースメタデータの辞書) のタプル。取得に失敗した場合はNone
         """
         url = f"https://db.netkeiba.com/race/{race_id}/"
         
         try:
             response = self.session.get(url, timeout=15)
             response.raise_for_status()
+            
+            # BeautifulSoupオブジェクトを作成してメタデータを抽出
+            soup = BeautifulSoup(response.content, 'lxml')
+            metadata = self._scrape_race_metadata(soup)
             
             # pandas.read_html()を使用してテーブルデータを抽出
             tables = pd.read_html(response.content)
@@ -185,7 +278,7 @@ class DataScraper:
             if len(results_df.columns) > 5:  # 最小限の列数チェック
                 # race_idを追加
                 results_df['race_id'] = race_id
-                return results_df
+                return (results_df, metadata)
             else:
                 print(f"Insufficient columns in race {race_id}")
                 return None
@@ -332,21 +425,22 @@ class DataScraper:
         with tqdm(total=len(race_id_list), desc="レースデータ取得・保存中") as pbar:
             for race_id in race_id_list:
                 try:
-                    # レース結果をスクレイピング
-                    results_df = self._scrape_race_results(race_id)
+                    # レース結果とメタデータをスクレイピング
+                    result = self._scrape_race_results(race_id)
                     
-                    if results_df is not None:
-                        # race_idから基本的なレース情報を作成（簡易版）
-                        # 実際の実装では、レースページからより詳細な情報を抽出する必要がある
+                    if result is not None:
+                        results_df, metadata = result
+                        
+                        # スクレイピングしたメタデータを使用してレース情報を作成
                         race_info = {
-                            'id': race_id,  # StringとしてそのままIDを使用
+                            'id': race_id,
                             'date': datetime.strptime(race_id[:8], '%Y%m%d').date(),
-                            'course': 'Unknown',  # HTMLパースで取得する必要がある
+                            'course': metadata.get('course') or 'Unknown',
                             'race_number': int(race_id[8:10]) if len(race_id) >= 10 else 1,
-                            'distance': 1600,  # デフォルト値、HTMLパースで取得する必要がある
-                            'track_type': '芝',  # デフォルト値、HTMLパースで取得する必要がある
-                            'weather': None,
-                            'track_condition': None
+                            'distance': metadata.get('distance') or 1600,
+                            'track_type': metadata.get('track_type') or '芝',
+                            'weather': metadata.get('weather'),
+                            'track_condition': metadata.get('track_condition')
                         }
                         
                         # データベースに保存
