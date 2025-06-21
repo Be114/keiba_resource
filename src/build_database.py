@@ -16,12 +16,15 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from tqdm import tqdm
-from urllib3.util.retry import Retry
-from requests.adapters import HTTPAdapter
 from sqlalchemy.exc import IntegrityError
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from src.db_utils import DatabaseManager
 from src.models import Race, Result
+from src.webdriver_utils import WebDriverManager
 
 
 class DataScraper:
@@ -58,32 +61,20 @@ class DataScraper:
         """
         self.start_year = start_year
         self.end_year = end_year
-        self.session = self._create_session()
+        self.session = self._create_session()  # レースID取得のみで使用
+        self.webdriver_manager = WebDriverManager()
         self.db_manager = DatabaseManager()
         # データベーステーブルを作成
         self.db_manager.create_tables()
     
     def _create_session(self) -> requests.Session:
         """
-        リトライ機能付きのHTTPセッションを作成
+        リトライ機能付きのHTTPセッションを作成（カレンダーページ取得専用）
         
         Returns:
             設定済みのrequests.Sessionオブジェクト
         """
         session = requests.Session()
-        
-        # リトライ戦略の設定
-        retry_strategy = Retry(
-            total=3,  # 最大3回リトライ
-            status_forcelist=[500, 502, 503, 504],  # 5xx系エラーでリトライ
-            backoff_factor=2,  # 指数バックオフ（2秒、4秒、8秒）
-            raise_on_status=False
-        )
-        
-        # HTTPアダプターにリトライ戦略を適用
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
         
         # User-Agentを設定（礼儀正しいスクレイピング）
         session.headers.update({
@@ -107,7 +98,7 @@ class DataScraper:
     
     def _fetch_race_ids_from_month(self, year: int, month: int) -> List[str]:
         """
-        指定された年月のレースIDを取得
+        指定された年月のレースIDを取得（2段階処理）
         
         Args:
             year: 年
@@ -116,33 +107,85 @@ class DataScraper:
         Returns:
             レースIDのリスト
         """
-        url = self._generate_calendar_url(year, month)
-        race_ids = []
+        # ステップ1: requestsでカレンダーページから開催日リストを取得
+        calendar_url = self._generate_calendar_url(year, month)
+        race_dates = []
         
         try:
-            response = self.session.get(url, timeout=10)
+            response = self.session.get(calendar_url, timeout=10)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'lxml')
             
-            # レースリンクを抽出（netkeiba.comのHTML構造に依存）
-            # 一般的なパターン: /race/xxxxxxxx/ の形式のリンク
-            race_links = soup.find_all('a', href=True)
+            # 開催日のリンクを抽出（通常はcalendar上の日付リンク）
+            # netkeiba.comのカレンダー構造に依存
+            date_links = soup.find_all('a', href=True)
             
-            for link in race_links:
+            for link in date_links:
                 href = link.get('href', '')
-                match = self.RACE_ID_PATTERN.search(href)
-                if match:
-                    race_id = match.group(1)
-                    race_ids.append(race_id)
+                # 日付別のレース一覧ページを探す
+                if '/race/list/' in href or '/top/race_list.html' in href:
+                    race_dates.append(urljoin(self.BASE_URL, href))
             
             # 重複を除去
-            race_ids = list(set(race_ids))
+            race_dates = list(set(race_dates))
             
         except requests.RequestException as e:
-            print(f"Error fetching data for {year}-{month:02d}: {e}")
+            print(f"Error fetching calendar for {year}-{month:02d}: {e}")
+            return []
         except Exception as e:
-            print(f"Unexpected error for {year}-{month:02d}: {e}")
+            print(f"Unexpected error fetching calendar for {year}-{month:02d}: {e}")
+            return []
+        
+        # ステップ2: Seleniumで各開催日のレース一覧ページからレースIDを取得
+        all_race_ids = []
+        
+        for date_url in race_dates:
+            try:
+                with self.webdriver_manager.driver_scope() as driver:
+                    # レース一覧ページを開く
+                    if not self.webdriver_manager.safe_get(driver, date_url):
+                        continue
+                    
+                    # JavaScriptの実行を待機
+                    time.sleep(2)
+                    
+                    # ページが完全に読み込まれるまで待機
+                    try:
+                        WebDriverWait(driver, 10).until(
+                            EC.presence_of_element_located((By.TAG_NAME, "body"))
+                        )
+                    except TimeoutException:
+                        print(f"Timeout waiting for page load: {date_url}")
+                        continue
+                    
+                    # レースIDを含むリンクを抽出
+                    race_links = driver.find_elements(By.TAG_NAME, "a")
+                    
+                    for link in race_links:
+                        try:
+                            href = link.get_attribute('href')
+                            if href:
+                                match = self.RACE_ID_PATTERN.search(href)
+                                if match:
+                                    race_id = match.group(1)
+                                    all_race_ids.append(race_id)
+                        except Exception:
+                            # リンク取得エラーは無視
+                            continue
+                    
+                    # サイトへの負荷軽減
+                    time.sleep(1)
+                    
+            except WebDriverException as e:
+                print(f"WebDriver error for {date_url}: {e}")
+                continue
+            except Exception as e:
+                print(f"Unexpected error processing {date_url}: {e}")
+                continue
+        
+        # 重複を除去
+        race_ids = list(set(all_race_ids))
         
         return race_ids
     
@@ -230,7 +273,7 @@ class DataScraper:
     
     def _scrape_race_results(self, race_id: str) -> Optional[tuple[pd.DataFrame, dict]]:
         """
-        指定されたレースIDの結果データとメタデータをスクレイピング
+        指定されたレースIDの結果データとメタデータをSeleniumを使ってスクレイピング
         
         Args:
             race_id: レースの一意識別子
@@ -241,51 +284,69 @@ class DataScraper:
         url = f"https://db.netkeiba.com/race/{race_id}/"
         
         try:
-            response = self.session.get(url, timeout=15)
-            response.raise_for_status()
-            
-            # BeautifulSoupオブジェクトを作成してメタデータを抽出
-            soup = BeautifulSoup(response.content, 'lxml')
-            metadata = self._scrape_race_metadata(soup)
-            
-            # pandas.read_html()を使用してテーブルデータを抽出
-            tables = pd.read_html(response.content)
-            
-            if not tables:
-                print(f"No tables found for race {race_id}")
-                return None
-            
-            # 通常、レース結果は最初のテーブルに含まれる
-            results_df = tables[0]
-            
-            # データクレンジング: 不要な列を削除し、データ型を調整
-            # 基本的なクレンジング
-            # 数値列の処理
-            numeric_columns = ['着順', '人気', '単勝', '斤量']
-            for col in numeric_columns:
-                if col in results_df.columns:
-                    # "---"や空文字列をNaNに変換
-                    results_df[col] = results_df[col].replace(['---', '', '除外', '中止', '取消'], pd.NA)
-                    # 数値型に変換を試行
-                    results_df[col] = pd.to_numeric(results_df[col], errors='coerce')
-            
-            # 文字列列の処理
-            string_columns = ['馬名', '騎手']
-            for col in string_columns:
-                if col in results_df.columns:
-                    results_df[col] = results_df[col].fillna('').astype(str)
-            
-            # 最小限の列数チェック
-            if len(results_df.columns) > 5:  # 最小限の列数チェック
-                # race_idを追加
-                results_df['race_id'] = race_id
-                return (results_df, metadata)
-            else:
-                print(f"Insufficient columns in race {race_id}")
-                return None
+            with self.webdriver_manager.driver_scope() as driver:
+                # レース詳細ページを開く
+                if not self.webdriver_manager.safe_get(driver, url):
+                    print(f"Failed to load race page: {race_id}")
+                    return None
                 
-        except requests.RequestException as e:
-            print(f"Error fetching race {race_id}: {e}")
+                # JavaScriptの実行とテーブル読み込みを待機
+                time.sleep(3)
+                
+                # ページが完全に読み込まれるまで待機
+                try:
+                    WebDriverWait(driver, 15).until(
+                        EC.presence_of_element_located((By.TAG_NAME, "table"))
+                    )
+                except TimeoutException:
+                    print(f"Timeout waiting for tables to load: {race_id}")
+                    return None
+                
+                # ページソースを取得してBeautifulSoupで解析
+                page_source = driver.page_source
+                soup = BeautifulSoup(page_source, 'lxml')
+                
+                # メタデータを抽出
+                metadata = self._scrape_race_metadata(soup)
+                
+                # pandas.read_html()を使用してテーブルデータを抽出
+                tables = pd.read_html(page_source)
+                
+                if not tables:
+                    print(f"No tables found for race {race_id}")
+                    return None
+                
+                # 通常、レース結果は最初のテーブルに含まれる
+                results_df = tables[0]
+                
+                # データクレンジング: 不要な列を削除し、データ型を調整
+                # 基本的なクレンジング
+                # 数値列の処理
+                numeric_columns = ['着順', '人気', '単勝', '斤量']
+                for col in numeric_columns:
+                    if col in results_df.columns:
+                        # "---"や空文字列をNaNに変換
+                        results_df[col] = results_df[col].replace(['---', '', '除外', '中止', '取消'], pd.NA)
+                        # 数値型に変換を試行
+                        results_df[col] = pd.to_numeric(results_df[col], errors='coerce')
+                
+                # 文字列列の処理
+                string_columns = ['馬名', '騎手']
+                for col in string_columns:
+                    if col in results_df.columns:
+                        results_df[col] = results_df[col].fillna('').astype(str)
+                
+                # 最小限の列数チェック
+                if len(results_df.columns) > 5:  # 最小限の列数チェック
+                    # race_idを追加
+                    results_df['race_id'] = race_id
+                    return (results_df, metadata)
+                else:
+                    print(f"Insufficient columns in race {race_id}")
+                    return None
+                    
+        except WebDriverException as e:
+            print(f"WebDriver error for race {race_id}: {e}")
             return None
         except ValueError as e:
             print(f"Error parsing HTML tables for race {race_id}: {e}")
