@@ -7,6 +7,7 @@
 """
 
 import argparse
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -289,6 +290,104 @@ class AnalysisEngine:
         
         return pd.DataFrame(data)
     
+    def _calculate_statistics(self, df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        データフレームから競馬統計量を計算します
+        
+        Args:
+            df: 競馬データのDataFrame
+            
+        Returns:
+            統計情報を含む辞書
+        """
+        if df.empty:
+            return {
+                'analysis_name': self.config.get('analysis_name', 'N/A'),
+                'total_races': 0,
+                'total_horses': 0,
+                'win_rate': 0.0,
+                'place_rate': 0.0,
+                'win_payout_rate': 0.0,
+                'place_payout_rate': 0.0,
+                'analysis_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+        
+        # 基本統計
+        total_races = df['race_id'].nunique()
+        total_horses = len(df)
+        
+        # 勝率計算
+        winners = df[df['is_winner'] == True]
+        win_rate = (len(winners) / total_horses * 100) if total_horses > 0 else 0.0
+        
+        # 複勝率計算（3着内率）
+        place_finishers = df[df['is_place'] == True]
+        place_rate = (len(place_finishers) / total_horses * 100) if total_horses > 0 else 0.0
+        
+        # 単勝回収率計算（100円ベットと仮定）
+        total_bet_amount = total_horses * 100  # 1頭あたり100円ベット
+        
+        # 単勝払戻金計算
+        win_payout = 0.0
+        for _, row in winners.iterrows():
+            if pd.notna(row['odds']) and row['odds'] > 0:
+                win_payout += row['odds'] * 100  # 100円ベットの払戻金
+        
+        win_payout_rate = (win_payout / total_bet_amount * 100) if total_bet_amount > 0 else 0.0
+        
+        # 複勝払戻金計算（簡略化: 複勝オッズを単勝オッズの1/3と仮定）
+        place_payout = 0.0
+        for _, row in place_finishers.iterrows():
+            if pd.notna(row['odds']) and row['odds'] > 0:
+                # 複勝オッズは通常単勝オッズより低いので、簡略化して計算
+                place_odds = max(1.0, row['odds'] / 3.0)  # 最低1.0倍
+                place_payout += place_odds * 100
+        
+        place_payout_rate = (place_payout / total_bet_amount * 100) if total_bet_amount > 0 else 0.0
+        
+        return {
+            'analysis_name': self.config.get('analysis_name', 'N/A'),
+            'total_races': total_races,
+            'total_horses': total_horses,
+            'win_rate': round(win_rate, 2),
+            'place_rate': round(place_rate, 2),
+            'win_payout_rate': round(win_payout_rate, 2),
+            'place_payout_rate': round(place_payout_rate, 2),
+            'analysis_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+    
+    def _export_to_csv(self, stats: Dict[str, Any]) -> None:
+        """
+        統計情報をCSVファイルに追記します
+        
+        Args:
+            stats: 統計情報を含む辞書
+        """
+        output_config = self.config.get('output', {})
+        csv_path = output_config.get('save_path', 'results/analysis_results.csv')
+        
+        # 出力ディレクトリが存在しない場合は作成
+        output_dir = os.path.dirname(csv_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+        
+        # DataFrameとして統計情報を整理
+        stats_df = pd.DataFrame([stats])
+        
+        # ファイルが既に存在するかチェック
+        file_exists = os.path.exists(csv_path)
+        
+        # CSVファイルに追記モードで書き込み
+        stats_df.to_csv(
+            csv_path,
+            mode='a',
+            header=not file_exists,  # ファイルが存在しない場合のみヘッダーを書き込み
+            index=False,
+            encoding='utf-8'
+        )
+        
+        print(f"\n結果をCSVファイルに保存しました: {csv_path}")
+    
     def run(self) -> bool:
         """
         分析エンジンのメイン処理を実行します
@@ -325,13 +424,26 @@ class AnalysisEngine:
                 df = self._extract_data_to_dataframe(results)
                 
                 print(f"\n抽出されたデータ: {len(df)} 件")
-                print("\n=== データサンプル（最初の5行）===")
-                print(df.head())
                 
-                print("\n=== データ統計情報 ===")
-                print(f"総レース数: {df['race_id'].nunique()}")
-                print(f"総競走馬数: {df['horse_name'].nunique()}")
-                print(f"対象期間: {df['race_date'].min()} 〜 {df['race_date'].max()}")
+                # 統計量を計算
+                stats = self._calculate_statistics(df)
+                
+                # 結果を表示
+                print("\n" + "="*60)
+                print("競馬分析結果")
+                print("="*60)
+                print(f"分析名: {stats['analysis_name']}")
+                print(f"総レース数: {stats['total_races']:,} レース")
+                print(f"総出走頭数: {stats['total_horses']:,} 頭")
+                print(f"勝率: {stats['win_rate']:.2f}%")
+                print(f"複勝率（3着内率）: {stats['place_rate']:.2f}%")
+                print(f"単勝回収率: {stats['win_payout_rate']:.2f}%")
+                print(f"複勝回収率: {stats['place_payout_rate']:.2f}%")
+                print(f"分析実行日時: {stats['analysis_date']}")
+                print("="*60)
+                
+                # CSVファイルに結果を保存
+                self._export_to_csv(stats)
                 
             print("\nデータ抽出が完了しました。")
             return True

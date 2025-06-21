@@ -7,9 +7,9 @@
 
 from datetime import date
 from typing import List, Optional
+
 from sqlalchemy import Column, Integer, String, Date, Float, ForeignKey
-from sqlalchemy.orm import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import declarative_base, relationship, Mapped, mapped_column
 
 Base = declarative_base()
 
@@ -19,7 +19,7 @@ class Race(Base):
     競馬レース情報を表すモデルクラス
     
     Attributes:
-        id: レースの一意識別子
+        id: レースの一意識別子 (netkeibaのID)
         date: 開催日
         course: コース名（例：東京、阪神）
         race_number: レース番号（1〜12）
@@ -32,17 +32,18 @@ class Race(Base):
     
     __tablename__ = 'races'
     
-    id: str = Column(String(12), primary_key=True)
-    date: date = Column(Date, nullable=False)
-    course: str = Column(String(50), nullable=False)
-    race_number: int = Column(Integer, nullable=False)
-    distance: int = Column(Integer, nullable=False)
-    track_type: str = Column(String(20), nullable=False)
-    weather: Optional[str] = Column(String(20))
-    track_condition: Optional[str] = Column(String(20))
+    # SQLAlchemy 2.0 推奨の書き方に変更
+    id: Mapped[str] = mapped_column(String(12), primary_key=True)
+    date: Mapped[date] = mapped_column(Date, nullable=False)
+    course: Mapped[str] = mapped_column(String(50), nullable=False)
+    race_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    distance: Mapped[int] = mapped_column(Integer, nullable=False)
+    track_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    weather: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    track_condition: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     
-    # リレーションシップ：1つのレースに複数の結果
-    results: List["Result"] = relationship("Result", back_populates="race", cascade="all, delete-orphan")
+    # リレーションシップの型ヒントもMapped[]で囲む
+    results: Mapped[List["Result"]] = relationship("Result", back_populates="race", cascade="all, delete-orphan")
     
     def __repr__(self) -> str:
         """レースオブジェクトの文字列表現を返す"""
@@ -58,8 +59,8 @@ class Result(Base):
     競馬レース結果を表すモデルクラス
     
     Attributes:
-        id: 結果の一意識別子
-        race_id: 関連するレースのID
+        id: 結果の一意識別子 (DBの自動採番)
+        race_id: 関連するレースのID (netkeibaのID)
         horse_name: 馬名
         rank: 着順
         pre_race_rank: 予想順位（オッズ順位）
@@ -71,17 +72,18 @@ class Result(Base):
     
     __tablename__ = 'results'
     
-    id: int = Column(Integer, primary_key=True, autoincrement=True)
-    race_id: str = Column(String(12), ForeignKey('races.id'), nullable=False)
-    horse_name: str = Column(String(100), nullable=False)
-    rank: int = Column(Integer, nullable=False)
-    pre_race_rank: Optional[int] = Column(Integer)
-    jockey_name: str = Column(String(50), nullable=False)
-    odds: Optional[float] = Column(Float)
-    weight: Optional[float] = Column(Float)
+    # SQLAlchemy 2.0 推奨の書き方に変更
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    race_id: Mapped[str] = mapped_column(String(12), ForeignKey('races.id'), nullable=False)
+    horse_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    pre_race_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    jockey_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    odds: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    weight: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     
-    # リレーションシップ：結果は1つのレースに属する
-    race: Race = relationship("Race", back_populates="results")
+    # リレーションシップの型ヒントもMapped[]で囲む
+    race: Mapped["Race"] = relationship("Race", back_populates="results")
     
     def __repr__(self) -> str:
         """結果オブジェクトの文字列表現を返す"""
