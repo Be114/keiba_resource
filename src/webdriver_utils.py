@@ -1,171 +1,247 @@
 """
-競馬データ収集ツール (Seleniumベース)
+WebDriver管理ユーティリティ
 
-netkeiba.comから指定された期間のレース情報を取得し、データベースに保存するツール。
-動的なページに対応するため、Selenium WebDriverを使用します。
+Selenium WebDriverの設定、初期化、および管理を行うモジュール。
+Chrome WebDriverの自動管理とコンテキストマネージャーパターンによる
+リソースの安全な管理を提供します。
 """
 
-import argparse
-import re
+import os
 import time
-from datetime import datetime
-from typing import List, Optional, Dict, Any, Tuple
+from contextlib import contextmanager
+from typing import Optional, Generator
 
-import pandas as pd
-from bs4 import BeautifulSoup
-from selenium.common.exceptions import WebDriverException
-from tqdm import tqdm
-from sqlalchemy.exc import IntegrityError
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException, WebDriverException
+from webdriver_manager.chrome import ChromeDriverManager
 
-# --- 修正点 1: 必要なモジュールをインポート ---
-from src.db_utils import DatabaseManager
-from src.models import Race, Result
-from src.webdriver_utils import get_webdriver_manager, driver_scope
 
-class DataScraper:
+class WebDriverConfig:
     """
-    netkeiba.comからレース情報を取得するデータスクレイパー (Selenium版)
-    """
-    TIME_SLEEP = 1
-    # --- 修正点 2: requests関連の正規表現を一部webdriver_utilsに寄せ、必要なものだけ残す ---
-    KAISAI_DATE_PATTERN = re.compile(r'kaisai_date=(\d+)')
-    RACE_ID_PATTERN = re.compile(r'race_id=(\d+)')
-
-    # --- 修正点 3: メタデータ抽出の正規表現はここで管理 ---
-    DISTANCE_PATTERN = re.compile(r'(\d+)m')
-    TRACK_TYPE_PATTERN = re.compile(r'(芝|ダート|障害)')
+    WebDriver設定管理クラス
     
-    def __init__(self, start_year: int, end_year: int):
-        self.start_year = start_year
-        self.end_year = end_year
-        # --- 修正点 4: sessionの代わりにwebdriver_managerを初期化 ---
-        self.webdriver_manager = get_webdriver_manager()
-        self.db_manager = DatabaseManager()
-        self.db_manager.create_tables()
-
-    # --- 修正点 5: requestsのセッション作成は不要になったので削除 ---
-    # def _create_session(self) -> requests.Session: ... (このメソッド全体を削除)
-
-    def _fetch_kaisai_dates(self, year: int, month: int) -> List[str]:
-        """
-        カレンダーページからその月のレース開催日リストを取得 (ここはrequestsでOK)
-        """
-        url = f"https://race.netkeiba.com/top/calendar.html?year={year}&month={month:02d}"
-        # この部分だけは静的なので、高速なrequestsを直接使っても良いが、
-        # User-Agentなどを統一するため、Selenium経由に統一するのも手。
-        # ここではシンプルにSeleniumに統一する。
-        dates = []
-        try:
-            with driver_scope() as driver:
-                driver.get(url)
-                soup = BeautifulSoup(driver.page_source, 'lxml')
-                for a in soup.select('.Calendar_Table a[href*="kaisai_date"]'):
-                    match = self.KAISAI_DATE_PATTERN.search(a['href'])
-                    if match:
-                        dates.append(match.group(1))
-        except WebDriverException as e:
-            print(f"Error fetching kaisai dates for {year}-{month:02d}: {e}")
-        return list(set(dates))
-
-    def _fetch_race_ids_from_date(self, kaisai_date: str) -> List[str]:
-        """
-        特定の日付のレース一覧ページからレースIDリストを取得 (Seleniumが必須)
-        """
-        url = f"https://race.netkeiba.com/top/race_list.html?kaisai_date={kaisai_date}"
-        race_ids = []
-        try:
-            with driver_scope() as driver:
-                driver.get(url)
-                # 'RaceList_DataItem'クラスの要素が表示されるまで待機
-                self.webdriver_manager.wait_for_element(driver, 'class name', 'RaceList_DataItem')
-                soup = BeautifulSoup(driver.page_source, 'lxml')
-                for a in soup.select('a[href*="race_id"]'):
-                    match = self.RACE_ID_PATTERN.search(a['href'])
-                    if match:
-                        race_ids.append(match.group(1))
-        except WebDriverException as e:
-            print(f"Error fetching race IDs for {kaisai_date}: {e}")
-        return list(set(race_ids))
+    環境変数とデフォルト値を使用してWebDriverの設定を管理します。
+    """
+    
+    def __init__(self):
+        """設定の初期化"""
+        # 環境変数から設定を読み込み、デフォルト値を設定
+        self.headless: bool = os.getenv('WEBDRIVER_HEADLESS', 'true').lower() == 'true'
+        self.timeout: int = int(os.getenv('WEBDRIVER_TIMEOUT', '30'))
+        self.window_width: int = int(os.getenv('WEBDRIVER_WINDOW_WIDTH', '1920'))
+        self.window_height: int = int(os.getenv('WEBDRIVER_WINDOW_HEIGHT', '1080'))
+        self.user_agent: str = os.getenv(
+            'WEBDRIVER_USER_AGENT', 
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        )
         
-    def _scrape_race_metadata(self, soup: BeautifulSoup) -> dict:
-        metadata = {'race_name': None, 'distance': None, 'track_type': None, 'weather': None, 'track_condition': None, 'course': None}
-        try:
-            diary_title = soup.select_one('.RaceData01')
-            if diary_title:
-                text = diary_title.get_text(strip=True)
-                # 例: "芝右 外2400m / 天候 : 晴 / 芝 : 良"
-                parts = text.split('/')
-                if len(parts) >= 3:
-                    # コース情報
-                    course_match = re.search(r'(芝|ダート|障害).*?(\d+)m', parts[0])
-                    if course_match:
-                        metadata['track_type'] = course_match.group(1)
-                        metadata['distance'] = int(course_match.group(2))
-                    # 天候
-                    weather_match = re.search(r'天候 : (\S+)', parts[1])
-                    if weather_match:
-                        metadata['weather'] = weather_match.group(1)
-                    # 馬場状態
-                    condition_match = re.search(r'芝 : (\S+)|ダート : (\S+)', parts[2])
-                    if condition_match:
-                        metadata['track_condition'] = condition_match.group(1) or condition_match.group(2)
+    def get_chrome_options(self) -> Options:
+        """
+        Chrome WebDriverのオプションを取得
+        
+        Returns:
+            設定済みのChromeOptionsオブジェクト
+        """
+        options = Options()
+        
+        # ヘッドレスモード
+        if self.headless:
+            options.add_argument('--headless')
+        
+        # ウィンドウサイズ
+        options.add_argument(f'--window-size={self.window_width},{self.window_height}')
+        
+        # User-Agent
+        options.add_argument(f'--user-agent={self.user_agent}')
+        
+        # パフォーマンス最適化のためのオプション
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--disable-extensions')
+        options.add_argument('--disable-plugins')
+        options.add_argument('--disable-images')
+        
+        # セキュリティ関連のオプション
+        options.add_argument('--disable-web-security')
+        options.add_argument('--disable-features=VizDisplayCompositor')
+        
+        return options
+
+
+class WebDriverManager:
+    """
+    WebDriver管理クラス
+    
+    Chrome WebDriverの初期化、設定、および安全な終了処理を管理します。
+    """
+    
+    def __init__(self, config: Optional[WebDriverConfig] = None):
+        """
+        WebDriverManagerの初期化
+        
+        Args:
+            config: WebDriver設定オブジェクト。Noneの場合はデフォルト設定を使用
+        """
+        self.config = config or WebDriverConfig()
+        self._driver_path: Optional[str] = None
+        
+    def _ensure_driver_path(self) -> str:
+        """
+        ChromeDriverのパスを確保
+        
+        Returns:
+            ChromeDriverの実行可能ファイルパス
+        """
+        if self._driver_path is None:
+            # webdriver-managerを使用してChromeDriverを自動ダウンロード・管理
+            self._driver_path = ChromeDriverManager().install()
+        return self._driver_path
+    
+    def create_driver(self) -> webdriver.Chrome:
+        """
+        Chrome WebDriverインスタンスを作成
+        
+        Returns:
+            設定済みのChrome WebDriverインスタンス
             
-            race_name_elem = soup.select_one('.RaceName')
-            if race_name_elem:
-                metadata['race_name'] = race_name_elem.get_text(strip=True)
-
-            main_race_data = soup.select_one('.RaceData02')
-            if main_race_data:
-                 metadata['course'] = main_race_data.get_text(strip=True).split(' ')[1]
-
-        except Exception as e:
-            print(f"Error extracting race metadata: {e}")
-        return metadata
-
-    def _scrape_race_results(self, race_id: str) -> Optional[Tuple[pd.DataFrame, dict]]:
-        url = f"https://db.netkeiba.com/race/{race_id}"
+        Raises:
+            WebDriverException: WebDriver作成に失敗した場合
+        """
         try:
-            with driver_scope() as driver:
+            # ChromeDriverのパスを取得
+            driver_path = self._ensure_driver_path()
+            
+            # サービスオブジェクトを作成
+            service = Service(driver_path)
+            
+            # Chromeオプションを取得
+            options = self.config.get_chrome_options()
+            
+            # WebDriverインスタンスを作成
+            driver = webdriver.Chrome(service=service, options=options)
+            
+            # タイムアウト設定
+            driver.implicitly_wait(self.config.timeout)
+            driver.set_page_load_timeout(self.config.timeout)
+            
+            return driver
+            
+        except Exception as e:
+            raise WebDriverException(f"Failed to create WebDriver: {e}")
+    
+    def safe_get(self, driver: webdriver.Chrome, url: str, retries: int = 3) -> bool:
+        """
+        URLを安全に取得（リトライ機能付き）
+        
+        Args:
+            driver: WebDriverインスタンス
+            url: 取得するURL
+            retries: リトライ回数
+            
+        Returns:
+            成功した場合True、失敗した場合False
+        """
+        for attempt in range(retries):
+            try:
                 driver.get(url)
-                soup = BeautifulSoup(driver.page_source, 'lxml')
-                metadata = self._scrape_race_metadata(soup)
-                
-                tables = pd.read_html(driver.page_source)
-                if not tables:
-                    print(f"No tables found for race {race_id}")
-                    return None
-
-                results_df = tables[0]
-                # ... (データクレンジングのロジックはほぼ同じなので省略)
-                return (results_df, metadata)
-        except (WebDriverException, ValueError) as e:
-            print(f"Error scraping race {race_id}: {e}")
-            return None
-
-    def _save_data_to_db(self, race_info: Dict[str, Any], results_df: pd.DataFrame) -> bool:
-        # ... (このメソッドは大きな変更なし)
-        pass # 便宜上省略
-
-    def run(self) -> None:
-        print(f"データ収集開始: {self.start_year}年 - {self.end_year}年")
+                return True
+            except (TimeoutException, WebDriverException) as e:
+                if attempt < retries - 1:
+                    print(f"Retry {attempt + 1}/{retries} for {url}: {e}")
+                    time.sleep(2 ** attempt)  # 指数バックオフ
+                else:
+                    print(f"Failed to load {url} after {retries} attempts: {e}")
+                    return False
+        return False
+    
+    def wait_for_element(self, driver: webdriver.Chrome, by: str, value: str, timeout: Optional[int] = None) -> bool:
+        """
+        要素の出現を待機
         
-        all_kaisai_dates = []
-        for year in range(self.start_year, self.end_year + 1):
-            for month in range(1, 13):
-                dates = self._fetch_kaisai_dates(year, month)
-                all_kaisai_dates.extend(dates)
-                time.sleep(self.TIME_SLEEP)
-
-        all_race_ids = set()
-        with tqdm(total=len(all_kaisai_dates), desc="レースID取得中") as pbar:
-            for kaisai_date in all_kaisai_dates:
-                ids = self._fetch_race_ids_from_date(kaisai_date)
-                all_race_ids.update(ids)
-                pbar.set_postfix({'日付': kaisai_date, '取得数': len(ids)})
-                pbar.update(1)
-                time.sleep(self.TIME_SLEEP)
+        Args:
+            driver: WebDriverインスタンス
+            by: 要素の検索方法（'id', 'class name', 'tag name'など）
+            value: 検索値
+            timeout: タイムアウト時間（秒）。Noneの場合はデフォルト設定を使用
+            
+        Returns:
+            要素が見つかった場合True、タイムアウトした場合False
+        """
+        try:
+            wait_timeout = timeout or self.config.timeout
+            wait = WebDriverWait(driver, wait_timeout)
+            
+            # by文字列をBy定数に変換
+            by_mapping = {
+                'id': By.ID,
+                'class name': By.CLASS_NAME,
+                'tag name': By.TAG_NAME,
+                'css selector': By.CSS_SELECTOR,
+                'xpath': By.XPATH,
+                'link text': By.LINK_TEXT,
+                'partial link text': By.PARTIAL_LINK_TEXT,
+                'name': By.NAME
+            }
+            
+            by_constant = by_mapping.get(by.lower(), By.CSS_SELECTOR)
+            wait.until(EC.presence_of_element_located((by_constant, value)))
+            return True
+            
+        except TimeoutException:
+            print(f"Timeout waiting for element: {by}='{value}'")
+            return False
+    
+    @contextmanager
+    def driver_scope(self) -> Generator[webdriver.Chrome, None, None]:
+        """
+        WebDriverのコンテキストマネージャー
         
-        # ... (ここから先のDB保存までの流れは以前とほぼ同じ)
-        pass # 便宜上省略
+        Yields:
+            Chrome WebDriverインスタンス
+        """
+        driver = None
+        try:
+            driver = self.create_driver()
+            yield driver
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except Exception as e:
+                    print(f"Error closing WebDriver: {e}")
 
-# ... (main関数やargparseの部分は変更なし)
+
+# グローバルインスタンス（シングルトンパターン）
+_webdriver_manager: Optional[WebDriverManager] = None
+
+
+def get_webdriver_manager() -> WebDriverManager:
+    """
+    WebDriverManagerのグローバルインスタンスを取得
+    
+    Returns:
+        WebDriverManagerインスタンス
+    """
+    global _webdriver_manager
+    if _webdriver_manager is None:
+        _webdriver_manager = WebDriverManager()
+    return _webdriver_manager
+
+
+@contextmanager
+def driver_scope() -> Generator[webdriver.Chrome, None, None]:
+    """
+    WebDriverのコンテキストマネージャー（グローバル関数版）
+    
+    Yields:
+        Chrome WebDriverインスタンス
+    """
+    manager = get_webdriver_manager()
+    with manager.driver_scope() as driver:
+        yield driver

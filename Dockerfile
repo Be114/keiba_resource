@@ -11,11 +11,11 @@ RUN apt-get update && apt-get install -y \
     gnupg \
     --no-install-recommends
 
-# Google Chromeの公式リポジトリのキーを追加
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add -
+# Google Chromeの公式リポジトリキーをダウンロード・配置
+RUN wget -q -O /usr/share/keyrings/google-chrome.gpg https://dl-ssl.google.com/linux/linux_signing_key.pub
 
-# Google Chromeの公式リポジトリをパッケージソースに追加
-RUN sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
+# Google Chromeの公式リポジトリをパッケージソースに追加（signed-byオプション使用）
+RUN sh -c 'echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
 
 # パッケージリストを再度更新し、Google Chrome（安定版）をインストール
 RUN apt-get update && apt-get install -y \
