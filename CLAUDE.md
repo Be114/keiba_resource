@@ -177,3 +177,135 @@ AnalysisEngineクラスの最終機能として、抽出したデータから競
 ### プルリクエスト
 - (このPRが最終となるため、次のPRへのリンクは不要)
 
+---
+
+## Session 10: keibalab.jp対応のためのスクレイパー移行
+### 実施日
+2025-06-25
+### このセッションの目的
+netkeiba.comのスクレイピングがSeleniumを使用しても困難になったため、より取得しやすいkeibalab.jpへの移行を実施する。データ構造の単純さとURL体系の明確さを活かし、効率的なデータ収集システムを構築する。
+
+### 詳細実装プラン
+
+#### 1. データソースの特徴と変更点
+**keibalab.jpの特徴:**
+- 2014年以降のレースデータのみ利用可能
+- 静的HTMLで構成されており、JavaScriptレンダリング不要
+- 日付ベースの明確なURL構造（https://www.keibalab.jp/db/race/YYYYMMDD/）
+- レースIDが14桁の明確なパターン（YYYYMMDDXXYY）
+
+**主な変更点:**
+- Selenium/WebDriver不要（requestsのみで対応可能）
+- レースID形式の変更：12桁 → 14桁
+- 開催場所コードが明確に定義されている
+
+#### 2. 開催場所コードマッピング
+調査により判明した開催場所コード：
+```
+札幌: 01
+函館: 02
+福島: 03
+新潟: 04
+東京: 05
+中山: 06
+中京: 07
+京都: 08
+阪神: 09
+小倉: 10
+```
+
+#### 3. 実装フェーズ
+
+##### フェーズ1: データベースモデルの更新
+1. `models.py`のRace.idカラムを12桁から14桁に拡張
+   - `String(12)` → `String(14)`
+2. 既存データがある場合のマイグレーション戦略検討
+
+##### フェーズ2: KeibalabScraperクラスの新規作成
+**主要機能:**
+1. 日付範囲からURLリストを生成
+2. 各日付ページからレースID一覧を取得
+3. 個別レースページから詳細データを抽出
+4. データベースへの保存
+
+**クラス設計:**
+```python
+class KeibalabScraper:
+    BASE_URL = "https://www.keibalab.jp/db/race/"
+    COURSE_CODES = {
+        "札幌": "01", "函館": "02", "福島": "03", "新潟": "04", "東京": "05",
+        "中山": "06", "中京": "07", "京都": "08", "阪神": "09", "小倉": "10"
+    }
+    
+    def __init__(self, start_year: int, end_year: int)
+    def _generate_date_urls(self) -> List[str]
+    def _fetch_race_ids_from_date(self, date_url: str) -> List[str]
+    def _scrape_race_details(self, race_id: str) -> Tuple[pd.DataFrame, dict]
+    def _extract_race_metadata(self, soup: BeautifulSoup) -> dict
+    def _save_to_database(self, race_data: dict, results_df: pd.DataFrame) -> bool
+    def run(self) -> None
+```
+
+##### フェーズ3: 段階的移行戦略
+1. コマンドライン引数に`--scraper-type`オプションを追加
+   - `netkeiba`（既存）
+   - `keibalab`（新規）
+2. 設定ファイルまたは環境変数でデフォルトスクレイパーを指定可能に
+3. 両方のスクレイパーを共存させ、段階的に移行
+
+#### 4. 技術的な実装詳細
+
+##### URL生成ロジック
+```python
+# 日付ページ: https://www.keibalab.jp/db/race/YYYYMMDD/
+# レースページ: https://www.keibalab.jp/db/race/YYYYMMDDXXYY/
+# XX: 開催場所コード (01-10)
+# YY: レース番号 (01-12)
+```
+
+##### データ抽出の要点
+- BeautifulSoupによるHTML解析
+- pandas.read_html()でのテーブルデータ取得
+- 正規表現による詳細情報の抽出
+
+##### エラーハンドリング
+- HTTP接続エラーのリトライ機構
+- データ欠損時のデフォルト値設定
+- 進捗表示とロギング
+
+#### 5. 実装優先順位
+1. models.pyのレースID拡張（影響範囲が大きいため最優先）
+2. KeibalabScraperの基本構造実装
+3. 日付ページからのレースID取得機能
+4. 個別レースページからのデータ抽出
+5. データベース保存機能
+6. コマンドライン統合とテスト
+7. ドキュメント更新
+
+### 完了タスク
+- [x] models.pyのレースIDカラムを14桁に拡張（String(12) → String(14)）
+- [x] KeibalabScraperクラスの新規作成（src/keibalab_scraper.py）
+- [x] 日付ベースURL生成とレースID取得機能の実装
+- [x] レース詳細スクレイピング機能の実装（BeautifulSoupとpandas.read_html使用）
+- [x] データベース保存処理の実装（既存のDatabaseManagerとの統合）
+- [x] コマンドライン引数の拡張（scrape_races.pyを新規作成、--scraper-type追加）
+- [x] 両スクレイパーの統合（netkeibaとkeibalabの選択可能）
+
+### 実装の成果
+1. **models.py**：レースIDカラムを14桁に拡張し、keibalabのID形式に対応
+2. **keibalab_scraper.py**：静的HTMLスクレイピングに特化した新しいスクレイパークラス
+   - 開催場所コードマッピングの実装（札幌:01〜小倉:10）
+   - 日付ベースのURL生成機能
+   - pandas.read_html()を活用した効率的なデータ抽出
+3. **scrape_races.py**：統合エントリーポイントの作成
+   - --scraper-typeオプションでnetkeibaとkeibalabを選択可能
+   - デフォルトをkeibalabに設定（より安定的）
+
+### 今後の課題
+- [ ] requirements.txtからSelenium関連の依存関係を削除（netkeibaスクレイパー廃止後）
+- [ ] README.mdとドキュメントの更新
+- [ ] 本番環境でのテストと性能評価
+
+### プルリクエスト
+- (作成予定)
+

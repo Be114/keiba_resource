@@ -33,7 +33,7 @@ class Race(Base):
     __tablename__ = 'races'
     
     # SQLAlchemy 2.0 推奨の書き方に変更
-    id: Mapped[str] = mapped_column(String(12), primary_key=True)
+    id: Mapped[str] = mapped_column(String(14), primary_key=True)
     date: Mapped[date] = mapped_column(Date, nullable=False)
     course: Mapped[str] = mapped_column(String(50), nullable=False)
     race_number: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -74,7 +74,7 @@ class Result(Base):
     
     # SQLAlchemy 2.0 推奨の書き方に変更
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    race_id: Mapped[str] = mapped_column(String(12), ForeignKey('races.id'), nullable=False)
+    race_id: Mapped[str] = mapped_column(String(14), ForeignKey('races.id'), nullable=False)
     horse_name: Mapped[str] = mapped_column(String(100), nullable=False)
     rank: Mapped[int] = mapped_column(Integer, nullable=False)
     pre_race_rank: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
